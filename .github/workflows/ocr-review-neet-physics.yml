@@ -1,0 +1,85 @@
+name: OCR review NEET Physics PDFs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ocr-review-neet-physics.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ocr-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source PDFs
+        uses: actions/checkout@v4
+
+      - name: Install OCR dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          python -m pip install --upgrade pip
+          python -m pip install pymupdf pillow pytesseract
+
+      - name: OCR every page and compare with embedded text
+        run: |
+          python - <<'PY'
+          import fitz, json, re, zipfile, hashlib
+          from pathlib import Path
+          from PIL import Image
+          import pytesseract
+
+          root = Path("Quiz")
+          out = Path("neet-physics-ocr-review")
+          out.mkdir(exist_ok=True)
+          pdfs = sorted(p for p in root.glob("Class */Physics/**/*.pdf") if "/NEET/" in p.as_posix())
+          manifest = []
+          for pdf in pdfs:
+              doc = fitz.open(pdf)
+              native_parts, ocr_parts = [], []
+              page_stats = []
+              for i, page in enumerate(doc):
+                  native = page.get_text("text").strip()
+                  pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5), alpha=False)
+                  image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                  ocr = pytesseract.image_to_string(image, config="--psm 6").strip()
+                  native_parts.append(f"\\n\\n===== PAGE {i+1} =====\\n{native}")
+                  ocr_parts.append(f"\\n\\n===== PAGE {i+1} =====\\n{ocr}")
+                  page_stats.append({
+                      "page": i+1,
+                      "native_chars": len(native),
+                      "ocr_chars": len(ocr),
+                      "native_question_markers": len(re.findall(r"(?m)^Q\\s*\\d+\\.", native)),
+                      "ocr_question_markers": len(re.findall(r"(?m)^Q\\s*\\d+\\.", ocr))
+                  })
+              rel = pdf.relative_to(root).with_suffix(".txt")
+              for kind, parts in (("native", native_parts), ("ocr", ocr_parts)):
+                  dest = out / kind / rel
+                  dest.parent.mkdir(parents=True, exist_ok=True)
+                  dest.write_text(f"SOURCE PDF: {pdf.as_posix()}\\nPAGES: {len(doc)}\\n" + "".join(parts), encoding="utf-8")
+              manifest.append({
+                  "source_pdf": pdf.as_posix(),
+                  "pages": len(doc),
+                  "sha256": hashlib.sha256(pdf.read_bytes()).hexdigest(),
+                  "page_stats": page_stats
+              })
+              print(f"OCR reviewed {pdf}: {len(doc)} pages")
+          (out / "manifest.json").write_text(json.dumps({"pdf_count": len(manifest), "files": manifest}, indent=2), encoding="utf-8")
+          with zipfile.ZipFile("neet-physics-ocr-review.zip", "w", zipfile.ZIP_DEFLATED) as z:
+              for file in out.rglob("*"):
+                  if file.is_file():
+                      z.write(file, file.relative_to(out.parent))
+          print(f"Completed OCR review for {len(manifest)} PDFs")
+          PY
+
+      - name: Upload OCR comparison artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: neet-physics-ocr-review
+          path: neet-physics-ocr-review.zip
+          if-no-files-found: error
+          retention-days: 14
