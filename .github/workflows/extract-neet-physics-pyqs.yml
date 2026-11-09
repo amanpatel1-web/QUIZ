@@ -1,0 +1,91 @@
+name: Extract NEET Physics PYQ PDFs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/extract-neet-physics-pyqs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out public question repository
+        uses: actions/checkout@v4
+
+      - name: Install PDF and OCR tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          python -m pip install --upgrade pip
+          python -m pip install pymupdf pillow pytesseract
+
+      - name: Extract all NEET Physics PDFs
+        run: |
+          python - <<'PY'
+          import fitz, json, re, zipfile
+          from pathlib import Path
+          from PIL import Image
+          import pytesseract
+
+          root = Path("Quiz")
+          out = Path("neet-physics-extracted")
+          out.mkdir(exist_ok=True)
+          pdfs = sorted(
+              p for p in root.glob("Class */Physics/**/*.pdf")
+              if "/NEET/" in p.as_posix()
+          )
+          manifest = []
+          for pdf in pdfs:
+              doc = fitz.open(pdf)
+              chunks = []
+              ocr_pages = []
+              for index, page in enumerate(doc):
+                  text = page.get_text("text").strip()
+                  if len(re.sub(r"\\s+", "", text)) < 35:
+                      pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                      image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                      ocr = pytesseract.image_to_string(image, config="--psm 6").strip()
+                      if len(ocr) > len(text):
+                          text = ocr
+                          ocr_pages.append(index + 1)
+                  chunks.append(f"\\n\\n===== PAGE {index + 1} =====\\n{text}")
+              rel = pdf.relative_to(root)
+              dest = out / rel.with_suffix(".txt")
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              dest.write_text(
+                  f"SOURCE PDF: {pdf.as_posix()}\\nPAGES: {len(doc)}\\n" + "".join(chunks),
+                  encoding="utf-8"
+              )
+              manifest.append({
+                  "source_pdf": pdf.as_posix(),
+                  "text_file": dest.as_posix(),
+                  "pages": len(doc),
+                  "characters": sum(len(x) for x in chunks),
+                  "ocr_pages": ocr_pages,
+                  "sha256": __import__("hashlib").sha256(pdf.read_bytes()).hexdigest()
+              })
+              print(f"Extracted {pdf}: {len(doc)} pages")
+          (out / "manifest.json").write_text(
+              json.dumps({"pdf_count": len(manifest), "files": manifest}, indent=2),
+              encoding="utf-8"
+          )
+          with zipfile.ZipFile("neet-physics-extracted.zip", "w", zipfile.ZIP_DEFLATED) as z:
+              for file in out.rglob("*"):
+                  if file.is_file():
+                      z.write(file, file.relative_to(out.parent))
+          print(f"Completed {len(manifest)} Physics NEET PDFs")
+          PY
+
+      - name: Upload extracted text artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: neet-physics-extracted-text
+          path: neet-physics-extracted.zip
+          if-no-files-found: error
+          retention-days: 14
