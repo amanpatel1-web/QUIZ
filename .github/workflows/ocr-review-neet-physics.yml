@@ -47,8 +47,8 @@ jobs:
                   pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5), alpha=False)
                   image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                   ocr = pytesseract.image_to_string(image, config="--psm 6").strip()
-                  native_parts.append(f"\\n\\n===== PAGE {i+1} =====\\n{native}")
-                  ocr_parts.append(f"\\n\\n===== PAGE {i+1} =====\\n{ocr}")
+                  native_parts.append(f"\n\n===== PAGE {i+1} =====\n{native}")
+                  ocr_parts.append(f"\n\n===== PAGE {i+1} =====\n{ocr}")
                   page_stats.append({
                       "page": i+1,
                       "native_chars": len(native),
