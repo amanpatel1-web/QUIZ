@@ -60,7 +60,7 @@ jobs:
               for kind, parts in (("native", native_parts), ("ocr", ocr_parts)):
                   dest = out / kind / rel
                   dest.parent.mkdir(parents=True, exist_ok=True)
-                  dest.write_text(f"SOURCE PDF: {pdf.as_posix()}\\nPAGES: {len(doc)}\\n" + "".join(parts), encoding="utf-8")
+                  dest.write_text(f"SOURCE PDF: {pdf.as_posix()}\nPAGES: {len(doc)}\n" + "".join(parts), encoding="utf-8")
               manifest.append({
                   "source_pdf": pdf.as_posix(),
                   "pages": len(doc),
